@@ -3,9 +3,11 @@
 .env.*
 !.env.example
 
-# Python cache và virtualenv
+# Python cache và virtualenv (mẫu **/ để khớp cả thư mục con như app/__pycache__)
 __pycache__/
+**/__pycache__/
 *.pyc
+**/*.pyc
 *.pyo
 venv/
 .venv/

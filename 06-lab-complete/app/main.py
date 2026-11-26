@@ -129,8 +129,9 @@ class AskRequest(BaseModel):
 # Endpoints
 # ──────────────────────────────────────────────────────────
 @app.get("/health")
-def health():
+async def health():
     """Liveness: luôn 200 khi process còn chạy, kể cả khi Redis chưa kết nối được."""
+    # async def và không có I/O: chạy thẳng trên event loop nên không phải xếp hàng sau các /ask đang giữ threadpool.
     return {
         "status": "ok",
         "version": VERSION,
