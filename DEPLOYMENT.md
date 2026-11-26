@@ -103,6 +103,6 @@ railway domain --service agent
 
 ## Screenshots
 
-- [Deployment dashboard](screenshots/dashboard.png)
-- [Service running](screenshots/running.png)
-- [Test results](screenshots/test.png)
+- [Deployment dashboard](screenshots/dashboard.png): dashboard Railway, hai service `agent` và `Redis` đều Online, deployment `ACTIVE`
+- [Service running](screenshots/running.png): trang `GET /health` của URL public (chụp bằng Chromium headless)
+- [Test results](screenshots/test.png): kết quả 4 lệnh tự kiểm CP6 (`200`, `200`, `401`, `200`). Ảnh được dựng thành khung terminal từ output thật của 4 lệnh curl chạy vào URL public (không phải cửa sổ terminal thật); key không hiển thị
