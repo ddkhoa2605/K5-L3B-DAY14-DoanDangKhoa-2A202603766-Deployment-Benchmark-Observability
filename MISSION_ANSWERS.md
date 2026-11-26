@@ -566,4 +566,98 @@ Giải thích: 5 câu hỏi trong **cùng một session** được 3 instance kh
 
 ## Part 6 - Production Ready Checklist
 
+Chạy trong WSL2 (`os.name` = `posix`), Docker 29.4, từ thư mục `06-lab-complete/`: `python check_production_ready.py` (đầy đủ, không `--skip-docker`).
+
+### 📋 Checklist Deliverable (output của script chấm)
+
+```text
+================================================================
+  📋 Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 43/43 checks passed
+  🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
+================================================================
+```
+
+Các số đo từ script: image **63 MB** (giới hạn 500 MB), build 22 giây; `docker stop` xong trong **0.8 giây**, exit code 0; rate limit chặn sau đúng 5 request thành công khi `RATE_LIMIT_PER_MINUTE=5`; 23 dòng log JSON hợp lệ.
+
+### Cách làm từng tiêu chí
+
+| # | Tiêu chí | File | Cách làm |
+|---|----------|------|----------|
+| 1 | Dockerfile | `Dockerfile` | Hai stage: `builder` cài package vào virtualenv `/opt/venv`; `runtime` (`python:3.11-slim`) chỉ copy venv + `app/` + `utils/`, chạy bằng user `agent` (uid 1001), có `HEALTHCHECK`. `CMD ["sh","-c","exec uvicorn ... --port ${PORT:-8000} --workers 2 --timeout-graceful-shutdown 8"]`. `requirements.txt` được copy trước để layer cài package được cache |
+| 2 | Compose | `docker-compose.yml` | Service `agent` (build từ Dockerfile) + `redis:7-alpine` có healthcheck; `REDIS_URL=redis://redis:6379/0`; `depends_on: redis: condition: service_healthy`; `env_file` với `required: false` |
+| 3 | `.dockerignore` | `.dockerignore` | Loại `.env`, `.env.*` (giữ `.env.example`), `__pycache__`, `*.pyc`, `venv`, `.venv`, `.git`, `*.md`, `benchmark-observability/` |
+| 4 | `/health` | `app/main.py` | Không đụng Redis nên luôn 200 khi process còn chạy |
+| 5 | `/ready` | `app/main.py`, `app/redis_client.py` | 503 khi chưa xong khởi động / đang tắt (`_ready`) hoặc `redis_healthy()` (ping, timeout 2 giây) thất bại |
+| 6 | API key | `app/auth.py` | `APIKeyHeader("X-API-Key")`, so khớp `AGENT_API_KEY` bằng `secrets.compare_digest` (chống timing attack); thiếu/sai → **401**; chưa cấu hình key thì từ chối tất cả |
+| 7 | Rate limit | `app/rate_limiter.py` | Sliding window log trên Redis sorted set, chạy trong **một script Lua** (xoá cũ → đếm → thêm) nên atomic giữa các worker; dùng `TIME` của Redis nên nhiều instance không bị lệch đồng hồ. Khoá Redis là SHA-256 của API key (không lưu key thô). Vượt → **429** + `Retry-After` |
+| 8 | Cost guard | `app/cost_guard.py` | `INCRBYFLOAT` cộng chi phí vào `cost:daily:<ngày UTC>` và `cost:monthly:<tháng>` (TTL 2 ngày / 35 ngày). `check_budget()` trước khi gọi LLM, `record_cost()` sau khi gọi; vượt `DAILY_BUDGET_USD` hoặc `MONTHLY_BUDGET_USD` → **402** |
+| 9 | Config | `app/config.py`, `.env.example` | Dataclass đọc `PORT`, `ENVIRONMENT`, `AGENT_API_KEY`, `REDIS_URL`, `RATE_LIMIT_PER_MINUTE`, `DAILY_BUDGET_USD`, `MONTHLY_BUDGET_USD`, `LOG_LEVEL` từ env. `ENVIRONMENT=production` mà thiếu `AGENT_API_KEY` thì app **từ chối khởi động** (fail fast). Không có secret trong code |
+| 10 | Log JSON | `app/main.py` | `JsonFormatter` (`json.dumps`, một dòng một object); log của uvicorn cũng đi qua formatter này và access log được thay bằng middleware ghi `{"event":"request","method","path","status","ms"}`. Không log API key hay nội dung câu hỏi (chỉ độ dài) |
+| 11 | Graceful shutdown | `app/main.py`, `Dockerfile` | `lifespan` dọn dẹp (đóng Redis, log `shutdown`); **không** tự đăng ký handler SIGTERM, để uvicorn tự drain request. Trong Docker, `exec` làm uvicorn thành PID 1 nên nhận SIGTERM trực tiếp |
+| 12 | Deploy config | `railway.toml`, `render.yaml` | Railway: `builder = "DOCKERFILE"`, `healthcheckPath = "/health"`. Render: `type: web`, `runtime: docker`, `healthCheckPath: /health`, `AGENT_API_KEY` dùng `generateValue: true`, `REDIS_URL` lấy từ service `keyvalue` |
+
+### Kiểm tra thêm ngoài script chấm
+
+Mình chạy `docker compose -p k5-day14-final up --build` rồi tự kiểm tra:
+
+```text
+GET /health -> 200            GET /ready -> 200
+POST /ask không key / sai key -> 401  (kèm header www-authenticate: ApiKey)
+POST /ask key đúng            -> 200  {"answer":"...","usage":{"input_tokens":3,"output_tokens":18,"cost_usd":1.125e-05}}
+RATE_LIMIT_PER_MINUTE=5: request 1-5 -> 200, request 6 -> 429
+   retry-after: 60, x-ratelimit-limit: 5, x-ratelimit-remaining: 0
+restart container agent -> request kế tiếp vẫn 429 (state nằm trong Redis)
+Redis keys: cost:monthly:2026-11, cost:daily:2026-11-26, ratelimit:<sha256>  (không có API key thô)
+docker exec ... id -un -> agent (non-root); PID 1 = uvicorn ... --workers 2
+docker stop agent -> 0.96 giây, exit code 0
+```
+
+Khi **Redis bị dừng** lúc agent đang chạy:
+
+```text
+/health -> 200     (process còn sống, restart cũng không cứu được Redis)
+/ready  -> 503     (load balancer ngừng gửi traffic vào instance này)
+POST /ask -> 503 {"detail":"Rate limiter unavailable (Redis down)"}
+Khởi động lại Redis -> /ready trở lại 200, không cần restart agent
+```
+
+Mẫu log (đều là JSON):
+
+```json
+{"ts": "2026-11-26T09:43:32.782+00:00", "lvl": "INFO", "event": "startup", "environment": "development", "version": "1.0.0", "rate_limit_per_minute": 5, "daily_budget_usd": 1.0}
+{"ts": "2026-11-26T09:43:37.673+00:00", "lvl": "INFO", "event": "request", "method": "POST", "path": "/ask", "status": 429, "ms": 13.2}
+```
+
+### Vì sao `/health` phải 200 khi Redis chết còn `/ready` phải 503
+
+- **`/health` (liveness)** trả lời "process còn sống không?". Nếu nó kiểm tra Redis và trả lỗi khi Redis chết, platform sẽ **restart agent liên tục** dù lỗi nằm ở Redis, restart không sửa được gì mà còn làm đứt các request đang chạy và có thể dẫn tới vòng lặp crash.
+- **`/ready` (readiness)** trả lời "instance này xử lý được request ngay bây giờ không?". Không có Redis thì rate limiter và cost guard không hoạt động, nên `/ask` không thể phục vụ đúng; trả 503 để load balancer tạm bỏ instance ra khỏi vòng gửi traffic, và khi Redis sống lại thì `/ready` tự trả 200 (đã kiểm chứng ở trên, không cần restart).
+
+### Quyết định thiết kế và đánh đổi
+
+- **Fail closed khi Redis chết:** `/ask` trả 503 thay vì cho qua. Cho qua sẽ làm mất giới hạn tốc độ và ngân sách đúng lúc không có gì kiểm soát được chi phí. Đánh đổi là dịch vụ không phục vụ được trong lúc Redis hỏng.
+- **Rate limit bằng Lua:** chuỗi `ZREMRANGEBYSCORE → ZCARD → ZADD` viết rời trong Python không atomic, hai worker có thể cùng thấy "còn chỗ" rồi cùng vượt giới hạn. Gói trong Lua thì Redis chạy trọn script như một lệnh. Mình chưa tự viết test đồng thời để chứng minh, nhưng script chấm chạy với `--workers 2` vẫn cho đúng 5 request thành công khi giới hạn là 5.
+- **Cost guard là tổng toàn hệ thống** (theo mô tả "tổng chi phí vượt budget" trong README), không theo từng user; và `check_budget` (trước) tách khỏi `record_cost` (sau) nên khi có nhiều request đồng thời, tổng chi phí có thể vượt ngưỡng một chút bằng chi phí của các request đang bay. Muốn chặt hơn phải "đặt chỗ" chi phí trước khi gọi LLM.
+- **`sync def` cho endpoint `/ask`:** mock LLM dùng `time.sleep`; khai báo `def` (chạy trong thread pool) để không chặn event loop như lỗi đã gặp ở Part 5.
+- **Ước lượng token** bằng độ dài chuỗi chia 4, chỉ là xấp xỉ; khi dùng LLM thật nên lấy số token từ phản hồi của API.
+
+### Điều chưa kiểm chứng
+
+- `render.yaml` và `railway.toml` mới qua kiểm tra tĩnh của script chấm, **chưa được deploy thật** (nằm ở CP6). Cú pháp `keyvalue` / `fromService` / `ipAllowList` của Render mình viết theo hiểu biết về Blueprint, cần xác nhận khi deploy.
+- Chưa làm các phần mở rộng không chấm điểm (lưu conversation history trong Redis, streaming, Nginx scale 3 instance).
+
 ## AI Log
