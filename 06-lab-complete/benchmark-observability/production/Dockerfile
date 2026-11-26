@@ -26,6 +26,8 @@ RUN chown -R agent:agent /app
 USER agent
 
 ENV PATH=/home/agent/.local/bin:$PATH
+# HOME của user agent là /app nên Python tìm user-site ở /app/.local; trỏ lại nơi builder đã cài package
+ENV PYTHONUSERBASE=/home/agent/.local
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

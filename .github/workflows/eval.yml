@@ -1,0 +1,31 @@
+name: quality-gate
+
+# Chặn merge khi chất lượng agent giảm: accuracy < 85% hoặc có câu từng đúng nay lại sai.
+# run_eval.py trả exit code 1 khi gate fail, nên step fail -> job fail -> PR không merge được
+# (bật "Require status checks to pass" cho job `eval` trong branch protection).
+on:
+  pull_request:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run agent + eval
+        working-directory: 06-lab-complete/benchmark-observability/develop
+        run: |
+          pip install -r requirements.txt
+          # Tắt lỗi upstream giả lập để kết quả eval không dao động vì 1% lỗi ngẫu nhiên
+          AGENT_VERSION=v2 MOCK_ERROR_RATE=0 PORT=8000 python app.py &
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+          python eval/run_eval.py --url http://localhost:8000 \
+            --min-accuracy 0.85 \
+            --baseline ../../../reports/eval_v2_fixed.json
