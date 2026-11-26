@@ -718,7 +718,20 @@ Mẫu log (đều là JSON):
 
 ### Điều chưa kiểm chứng
 
-- `render.yaml` và `railway.toml` mới qua kiểm tra tĩnh của script chấm, **chưa được deploy thật** (nằm ở CP6). Cú pháp `keyvalue` / `fromService` / `ipAllowList` của Render mình viết theo hiểu biết về Blueprint, cần xác nhận khi deploy.
+- `railway.toml` đã được dùng để deploy thật lên Railway ở CP6 (xem Part 3 và `DEPLOYMENT.md`). `render.yaml` chỉ qua kiểm tra tĩnh của script chấm, **chưa được deploy thật**; cú pháp `type: redis` / `fromService` / `ipAllowList` mình viết theo mẫu của bài và hiểu biết về Blueprint, cần xác nhận nếu deploy lên Render (file nằm trong `06-lab-complete/` nên phải trỏ root directory vào đó).
 - Chưa làm các phần mở rộng không chấm điểm (lưu conversation history trong Redis, streaming, Nginx scale 3 instance).
 
 ## AI Log
+
+**Công cụ AI:** Claude Code 
+
+**Cách làm việc:** mình hỏi Claude gợi ý cách làm từng checkpoint (CP1 đến CP8) cho Claude Code. Và hỏi cách triển khai WSL vài chỗ vì không rành
+
+| # | Phần | Mình hỏi / giao gì | AI cho ra gì | Kiểm tra thế nào và sửa lại gì |
+|---|---|---|---|---|
+| 1 | Môi trường Linux | Xử lý lỗi virtual environment và Python trong WSL | Giải thích sự khác biệt giữa môi trường Windows và Linux; đề xuất sử dụng `uv` và Python 3.12 để đảm bảo tương thích thư viện | Kiểm tra lại phiên bản `pydantic`, `pydantic_core` và môi trường thực thi thông qua `os.name` |
+| 2 | Mạng WSL | Xử lý lỗi `connection refused` khi gọi API | Hỗ trợ phân tích nguyên nhân liên quan đến kết nối mạng giữa Windows và WSL2; đề xuất chạy server và client trong cùng môi trường | Kiểm tra lại kết nối bằng `curl` trong WSL |
+
+**Những gì mình tự làm / quyết định:** Trong quá trình thực hiện lab, mình chủ động xác định các nội dung cần hỗ trợ, đặt câu hỏi khi gặp vấn đề kỹ thuật và sử dụng AI để tham khảo các phương án giải quyết.
+
+**Giới hạn của phần AI:** Các đề xuất và nhận định của AI không mặc nhiên được xem là chính xác mà cần được đối chiếu với mã nguồn và kết quả thực nghiệm. Trong quá trình thực hiện, một số giả thuyết ban đầu chưa phù hợp và đã được điều chỉnh dựa trên số liệu thu thập được.
